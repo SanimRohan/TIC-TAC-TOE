@@ -4,8 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Tic-Tac-Toe</title>
-  <!-- PeerJS for serverless peer-to-peer multiplayer on GitHub Pages -->
-  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
 * {
   box-sizing: border-box;
@@ -247,7 +245,33 @@ h1 {
     <button id="reset-btn" class="reset-btn" type="button">Restart Game</button>
   </main>
 
-  <script>
+  <script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js";
+import {
+  getDatabase,
+  ref,
+  set,
+  get,
+  update,
+  remove,
+  onValue,
+  onDisconnect
+} from "https://www.gstatic.com/firebasejs/13.4.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCHix02ikwmnyV9WC9hZ9iERC3pk9wLSbY",
+  authDomain: "tic-tac-toe-3c51d.firebaseapp.com",
+  databaseURL: "https://tic-tac-toe-3c51d-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "tic-tac-toe-3c51d",
+  storageBucket: "tic-tac-toe-3c51d.firebasestorage.app",
+  messagingSenderId: "816272928731",
+  appId: "1:816272928731:web:dba74c38962c8ddb9301fe",
+  measurementId: "G-RR7YPTV1KJ"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
 const cells = document.querySelectorAll(".cell");
 const statusText = document.getElementById("status");
 const resetBtn = document.getElementById("reset-btn");
@@ -268,9 +292,6 @@ const WINNING_COMBOS = [
   [0, 4, 8], [2, 4, 6]
 ];
 
-// Prefix avoids colliding with other public PeerJS users
-const ROOM_PREFIX = "ttt-sanim-room-";
-
 let board = Array(9).fill(null);
 let currentPlayer = "X";
 let gameOver = false;
@@ -279,10 +300,11 @@ let isBotThinking = false;
 let botTimerId = null;
 
 // Online multiplayer state
-let peer = null;
-let conn = null;
+let roomRef = null;
+let unsubscribeRoom = null;
 let mySymbol = null; // "X" for host, "O" for guest
 let isConnected = false;
+let roomVersion = 0;
 
 function getTurnLabel() {
   if (gameMode === "bot" && currentPlayer === "O") {
@@ -311,7 +333,7 @@ function isBoardFull(state) {
   return state.every((cell) => cell !== null);
 }
 
-function checkResult() {
+function evaluateGameState() {
   const winResult = checkWinner(board);
   if (winResult) {
     gameOver = true;
@@ -333,7 +355,6 @@ function checkResult() {
     return true;
   }
 
-  currentPlayer = currentPlayer === "X" ? "O" : "X";
   statusText.textContent = getTurnLabel();
   return false;
 }
@@ -343,6 +364,22 @@ function placeMark(index, player) {
   cells[index].textContent = player;
   cells[index].classList.add(player.toLowerCase());
   cells[index].disabled = true;
+}
+
+function syncBoardFromSnapshot(roomData) {
+  resetBoardState();
+  const remoteBoard = Array.isArray(roomData.board)
+    ? Array.from({ length: 9 }, (_, i) => roomData.board[i] || null)
+    : Array(9).fill(null);
+
+  for (let i = 0; i < 9; i++) {
+    if (remoteBoard[i] === "X" || remoteBoard[i] === "O") {
+      placeMark(i, remoteBoard[i]);
+    }
+  }
+
+  currentPlayer = roomData.currentPlayer === "O" ? "O" : "X";
+  evaluateGameState();
 }
 
 // --- BOT LOGIC (Minimax) ---
@@ -405,6 +442,259 @@ function scheduleBotTurn() {
     if (gameOver || currentPlayer !== "O") return;
     const moveIndex = getBotMove(board);
     if (moveIndex !== null && moveIndex !== undefined) {
+      placeMark(moveIndex, "O");
+      currentPlayer = "X";
+      evaluateGameState();
+    }
+  }, 300);
+}
+
+// --- ONLINE MULTIPLAYER LOGIC (Firebase Realtime Database) ---
+function cleanupNetwork() {
+  if (unsubscribeRoom) {
+    unsubscribeRoom();
+    unsubscribeRoom = null;
+  }
+  if (roomRef && mySymbol) {
+    const presencePath = mySymbol === "X" ? "hostConnected" : "guestConnected";
+    set(ref(db, `${roomRef.key}/${presencePath}`), false).catch(() => {});
+    if (mySymbol === "X") {
+      remove(roomRef).catch(() => {});
+    }
+  }
+  roomRef = null;
+  isConnected = false;
+  mySymbol = null;
+  roomVersion = 0;
+  createRoomBtn.disabled = false;
+  joinRoomBtn.disabled = false;
+  roomCodeInput.disabled = false;
+  roomInfo.textContent = "Generate a room code or enter one to join.";
+}
+
+function attachRoomListener(targetRoomRef, code) {
+  if (unsubscribeRoom) {
+    unsubscribeRoom();
+  }
+
+  unsubscribeRoom = onValue(targetRoomRef, (snapshot) => {
+    const data = snapshot.val();
+    if (!data) {
+      if (isConnected) {
+        isConnected = false;
+        gameOver = true;
+        statusText.textContent = "Opponent left the room.";
+        roomInfo.textContent = "Room closed. Generate or join a new room.";
+        createRoomBtn.disabled = false;
+        joinRoomBtn.disabled = false;
+        roomCodeInput.disabled = false;
+      }
+      return;
+    }
+
+    const bothConnected = Boolean(data.hostConnected && data.guestConnected);
+
+    if (bothConnected && !isConnected) {
+      isConnected = true;
+      roomInfo.innerHTML = `Room <strong>${code}</strong> — Playing as <strong>${mySymbol}</strong>`;
+    } else if (!bothConnected && isConnected) {
+      isConnected = false;
+      gameOver = true;
+      statusText.textContent = "Opponent disconnected.";
+      roomInfo.innerHTML = `Room <strong>${code}</strong> — Waiting for opponent...`;
+    } else if (mySymbol === "X" && !bothConnected) {
+      roomInfo.innerHTML = `Room Code: <strong>${code}</strong> (Share with friend)`;
+      statusText.textContent = "Waiting for player O to join...";
+    }
+
+    if (bothConnected) {
+      roomVersion = Number(data.version || 0);
+      syncBoardFromSnapshot(data);
+    }
+  });
+}
+
+async function generateRoomCode() {
+  cleanupNetwork();
+
+  let code = "";
+  let candidateRef = null;
+  let attempts = 0;
+
+  createRoomBtn.disabled = true;
+  joinRoomBtn.disabled = true;
+  roomCodeInput.disabled = true;
+  roomInfo.textContent = "Creating room...";
+
+  while (attempts < 10) {
+    code = Math.floor(10000 + Math.random() * 90000).toString();
+    candidateRef = ref(db, `rooms/${code}`);
+    const existing = await get(candidateRef);
+    if (!existing.exists() || !existing.val()?.hostConnected) {
+      break;
+    }
+    attempts++;
+  }
+
+  mySymbol = "X";
+  roomRef = candidateRef;
+  roomCodeInput.value = code;
+
+  await set(roomRef, {
+    hostConnected: true,
+    guestConnected: false,
+    board: Array(9).fill(""),
+    currentPlayer: "X",
+    version: 0
+  });
+
+  onDisconnect(ref(db, `rooms/${code}/hostConnected`)).set(false);
+  attachRoomListener(roomRef, code);
+}
+
+async function joinRoom() {
+  const code = roomCodeInput.value.trim();
+  if (!/^\d{4,5}$/.test(code)) {
+    roomInfo.textContent = "Please enter a valid 4 or 5 digit code.";
+    return;
+  }
+
+  cleanupNetwork();
+  createRoomBtn.disabled = true;
+  joinRoomBtn.disabled = true;
+  roomCodeInput.disabled = true;
+  roomInfo.textContent = `Connecting to room ${code}...`;
+
+  const targetRef = ref(db, `rooms/${code}`);
+  const snap = await get(targetRef);
+  const roomData = snap.val();
+
+  if (!roomData || !roomData.hostConnected) {
+    roomInfo.textContent = `Room ${code} not found.`;
+    cleanupNetwork();
+    return;
+  }
+
+  if (roomData.guestConnected) {
+    roomInfo.textContent = `Room ${code} is already full.`;
+    cleanupNetwork();
+    return;
+  }
+
+  mySymbol = "O";
+  roomRef = targetRef;
+
+  await update(roomRef, {
+    guestConnected: true
+  });
+
+  onDisconnect(ref(db, `rooms/${code}/guestConnected`)).set(false);
+  attachRoomListener(roomRef, code);
+}
+
+// --- CORE GAME HANDLERS ---
+function handleCellClick(e) {
+  const index = Number(e.currentTarget.dataset.index);
+
+  if (gameOver || isBotThinking || board[index] !== null) return;
+  if (gameMode === "bot" && currentPlayer === "O") return;
+
+  if (gameMode === "online") {
+    if (!isConnected || !roomRef || currentPlayer !== mySymbol) return;
+    const nextBoard = Array.from({ length: 9 }, (_, i) =>
+      i === index ? mySymbol : (board[i] || "")
+    );
+    const nextPlayer = mySymbol === "X" ? "O" : "X";
+    const nextVersion = roomVersion + 1;
+
+    placeMark(index, mySymbol);
+    currentPlayer = nextPlayer;
+    roomVersion = nextVersion;
+    evaluateGameState();
+
+    update(roomRef, {
+      board: nextBoard,
+      currentPlayer: nextPlayer,
+      version: nextVersion
+    }).catch((err) => {
+      console.error("Failed to sync move:", err);
+    });
+    return;
+  }
+
+  placeMark(index, currentPlayer);
+  currentPlayer = currentPlayer === "X" ? "O" : "X";
+  const finished = evaluateGameState();
+
+  if (!finished && gameMode === "bot" && currentPlayer === "O") {
+    scheduleBotTurn();
+  }
+}
+
+function setMode(newMode) {
+  if (gameMode === newMode) return;
+  cleanupNetwork();
+  gameMode = newMode;
+
+  modePvpBtn.classList.toggle("active", newMode === "pvp");
+  modeBotBtn.classList.toggle("active", newMode === "bot");
+  modeOnlineBtn.classList.toggle("active", newMode === "online");
+  onlinePanel.classList.toggle("visible", newMode === "online");
+
+  resetBoardState();
+}
+
+function resetBoardState() {
+  clearTimeout(botTimerId);
+  botTimerId = null;
+  isBotThinking = false;
+
+  board = Array(9).fill(null);
+  currentPlayer = "X";
+  gameOver = false;
+  statusText.textContent = getTurnLabel();
+
+  cells.forEach((cell) => {
+    cell.textContent = "";
+    cell.disabled = false;
+    cell.classList.remove("x", "o", "win");
+  });
+}
+
+function handleResetClick() {
+  if (gameMode === "online") {
+    if (!isConnected || !roomRef) return;
+    const nextVersion = roomVersion + 1;
+    resetBoardState();
+    update(roomRef, {
+      board: Array(9).fill(""),
+      currentPlayer: "X",
+      version: nextVersion
+    }).catch((err) => {
+      console.error("Failed to reset online room:", err);
+    });
+    return;
+  }
+  resetBoardState();
+}
+
+window.addEventListener("beforeunload", cleanupNetwork);
+
+cells.forEach((cell) => cell.addEventListener("click", handleCellClick));
+resetBtn.addEventListener("click", handleResetClick);
+modePvpBtn.addEventListener("click", () => setMode("pvp"));
+modeBotBtn.addEventListener("click", () => setMode("bot"));
+modeOnlineBtn.addEventListener("click", () => setMode("online"));
+
+createRoomBtn.addEventListener("click", generateRoomCode);
+joinRoomBtn.addEventListener("click", joinRoom);
+roomCodeInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") joinRoom();
+});
+  </script>
+</body>
+</html>
+ null && moveIndex !== undefined) {
       placeMark(moveIndex, "O");
       checkResult();
     }
