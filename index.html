@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tic-Tac-Toe</title>
+  <!-- PeerJS for serverless peer-to-peer multiplayer on GitHub Pages -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  background: #0f172a;
+  color: #f8fafc;
+}
+
+.game {
+  text-align: center;
+  padding: 2rem;
+  max-width: 400px;
+  width: 100%;
+}
+
+h1 {
+  font-size: 2.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.mode-toggle {
+  display: inline-flex;
+  gap: 0.4rem;
+  background: #1e293b;
+  padding: 0.3rem;
+  border-radius: 10px;
+  border: 1px solid #334155;
+  margin-bottom: 1rem;
+}
+
+.mode-btn {
+  padding: 0.45rem 0.9rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.mode-btn.active {
+  background: #3b82f6;
+  color: #ffffff;
+}
+
+/* Online Lobby Panel */
+.online-panel {
+  display: none;
+  flex-direction: column;
+  gap: 0.75rem;
+  background: #1e293b;
+  padding: 1rem;
+  border-radius: 12px;
+  border: 1px solid #334155;
+  margin-bottom: 1.25rem;
+}
+
+.online-panel.visible {
+  display: flex;
+}
+
+.online-row {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.room-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.55rem 0.75rem;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-align: center;
+  border-radius: 8px;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: #f8fafc;
+}
+
+.room-input::placeholder {
+  letter-spacing: normal;
+  font-weight: 400;
+  color: #64748b;
+}
+
+.action-btn {
+  padding: 0.55rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  background: #3b82f6;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  white-space: nowrap;
+}
+
+.action-btn:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.action-btn.secondary {
+  background: #10b981;
+}
+
+.action-btn.secondary:hover:not(:disabled) {
+  background: #059669;
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.room-badge {
+  font-size: 0.9rem;
+  color: #94a3b8;
+}
+
+.room-badge strong {
+  color: #38bdf8;
+  font-size: 1.15rem;
+  letter-spacing: 2px;
+}
+
+.status {
+  font-size: 1.125rem;
+  margin-bottom: 1.25rem;
+  color: #cbd5e1;
+  min-height: 1.5rem;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(3, 100px);
+  grid-template-rows: repeat(3, 100px);
+  gap: 10px;
+  justify-content: center;
+  margin: 0 auto 1.5rem;
+}
+
+.cell {
+  background: #1e293b;
+  border: 2px solid #334155;
+  border-radius: 12px;
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: #f8fafc;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.cell:hover:not(:disabled) {
+  background: #334155;
+  transform: translateY(-2px);
+}
+
+.cell:disabled {
+  cursor: default;
+}
+
+.cell.x {
+  color: #38bdf8;
+}
+
+.cell.o {
+  color: #fb7185;
+}
+
+.cell.win {
+  background: #14532d;
+  border-color: #4ade80;
+}
+
+.reset-btn {
+  padding: 0.65rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  background: #3b82f6;
+  color: white;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.reset-btn:hover {
+  background: #2563eb;
+}
+  </style>
+</head>
+<body>
+  <main class="game">
+    <h1>Tic-Tac-Toe</h1>
+
+    <div class="mode-toggle" role="group" aria-label="Game mode">
+      <button id="mode-pvp" class="mode-btn active" type="button">Local 2P</button>
+      <button id="mode-bot" class="mode-btn" type="button">vs. Bot</button>
+      <button id="mode-online" class="mode-btn" type="button">Online</button>
+    </div>
+
+    <!-- Online Room Controls -->
+    <section id="online-panel" class="online-panel" aria-label="Online multiplayer controls">
+      <div class="online-row">
+        <button id="create-room-btn" class="action-btn secondary" type="button">Generate Code</button>
+        <input id="room-code-input" class="room-input" type="text" inputmode="numeric" maxlength="5" placeholder="5-digit code" aria-label="Room number" />
+        <button id="join-room-btn" class="action-btn" type="button">Join</button>
+      </div>
+      <p id="room-info" class="room-badge">Generate a room code or enter one to join.</p>
+    </section>
+
+    <p id="status" class="status" aria-live="polite">Player X's turn</p>
+
+    <div id="board" class="board" role="grid" aria-label="Tic-Tac-Toe board">
+      <button class="cell" data-index="0" aria-label="Row 1, Column 1"></button>
+      <button class="cell" data-index="1" aria-label="Row 1, Column 2"></button>
+      <button class="cell" data-index="2" aria-label="Row 1, Column 3"></button>
+      <button class="cell" data-index="3" aria-label="Row 2, Column 1"></button>
+      <button class="cell" data-index="4" aria-label="Row 2, Column 2"></button>
+      <button class="cell" data-index="5" aria-label="Row 2, Column 3"></button>
+      <button class="cell" data-index="6" aria-label="Row 3, Column 1"></button>
+      <button class="cell" data-index="7" aria-label="Row 3, Column 2"></button>
+      <button class="cell" data-index="8" aria-label="Row 3, Column 3"></button>
+    </div>
+
+    <button id="reset-btn" class="reset-btn" type="button">Restart Game</button>
+  </main>
+
+  <script>
+const cells = document.querySelectorAll(".cell");
+const statusText = document.getElementById("status");
+const resetBtn = document.getElementById("reset-btn");
+const modePvpBtn = document.getElementById("mode-pvp");
+const modeBotBtn = document.getElementById("mode-bot");
+const modeOnlineBtn = document.getElementById("mode-online");
+
+// Online UI elements
+const onlinePanel = document.getElementById("online-panel");
+const createRoomBtn = document.getElementById("create-room-btn");
+const joinRoomBtn = document.getElementById("join-room-btn");
+const roomCodeInput = document.getElementById("room-code-input");
+const roomInfo = document.getElementById("room-info");
+
+const WINNING_COMBOS = [
+  [0, 1, 2], [3, 4, 5], [6, 7, 8],
+  [0, 3, 6], [1, 4, 7], [2, 5, 8],
+  [0, 4, 8], [2, 4, 6]
+];
+
+// Prefix avoids colliding with other public PeerJS users
+const ROOM_PREFIX = "ttt-sanim-room-";
+
+let board = Array(9).fill(null);
+let currentPlayer = "X";
+let gameOver = false;
+let gameMode = "pvp"; // "pvp" | "bot" | "online"
+let isBotThinking = false;
+let botTimerId = null;
+
+// Online multiplayer state
+let peer = null;
+let conn = null;
+let mySymbol = null; // "X" for host, "O" for guest
+let isConnected = false;
+
+function getTurnLabel() {
+  if (gameMode === "bot" && currentPlayer === "O") {
+    return "Bot (O) is thinking...";
+  }
+  if (gameMode === "online") {
+    if (!isConnected) return "Waiting for opponent...";
+    return currentPlayer === mySymbol
+      ? `Your turn (${mySymbol})`
+      : `Opponent's turn (${currentPlayer})`;
+  }
+  return `Player ${currentPlayer}'s turn`;
+}
+
+function checkWinner(state) {
+  for (const combo of WINNING_COMBOS) {
+    const [a, b, c] = combo;
+    if (state[a] && state[a] === state[b] && state[a] === state[c]) {
+      return { winner: state[a], combo };
+    }
+  }
+  return null;
+}
+
+function isBoardFull(state) {
+  return state.every((cell) => cell !== null);
+}
+
+function checkResult() {
+  const winResult = checkWinner(board);
+  if (winResult) {
+    gameOver = true;
+    winResult.combo.forEach((idx) => cells[idx].classList.add("win"));
+
+    if (gameMode === "bot" && winResult.winner === "O") {
+      statusText.textContent = "Bot (O) wins!";
+    } else if (gameMode === "online") {
+      statusText.textContent = winResult.winner === mySymbol ? "You win!" : "Opponent wins!";
+    } else {
+      statusText.textContent = `Player ${winResult.winner} wins!`;
+    }
+    return true;
+  }
+
+  if (isBoardFull(board)) {
+    gameOver = true;
+    statusText.textContent = "It's a draw!";
+    return true;
+  }
+
+  currentPlayer = currentPlayer === "X" ? "O" : "X";
+  statusText.textContent = getTurnLabel();
+  return false;
+}
+
+function placeMark(index, player) {
+  board[index] = player;
+  cells[index].textContent = player;
+  cells[index].classList.add(player.toLowerCase());
+  cells[index].disabled = true;
+}
+
+// --- BOT LOGIC (Minimax) ---
+function minimax(state, depth, isMaximizing) {
+  const winResult = checkWinner(state);
+  if (winResult) return winResult.winner === "O" ? 10 - depth : depth - 10;
+  if (isBoardFull(state)) return 0;
+
+  if (isMaximizing) {
+    let bestScore = -Infinity;
+    for (let i = 0; i < state.length; i++) {
+      if (state[i] === null) {
+        state[i] = "O";
+        bestScore = Math.max(bestScore, minimax(state, depth + 1, false));
+        state[i] = null;
+      }
+    }
+    return bestScore;
+  } else {
+    let bestScore = Infinity;
+    for (let i = 0; i < state.length; i++) {
+      if (state[i] === null) {
+        state[i] = "X";
+        bestScore = Math.min(bestScore, minimax(state, depth + 1, true));
+        state[i] = null;
+      }
+    }
+    return bestScore;
+  }
+}
+
+function getBotMove(state) {
+  if (state.every((cell) => cell === null)) return 4;
+  let bestScore = -Infinity;
+  let bestMove = null;
+  const workingBoard = [...state];
+
+  for (let i = 0; i < workingBoard.length; i++) {
+    if (workingBoard[i] === null) {
+      workingBoard[i] = "O";
+      const score = minimax(workingBoard, 0, false);
+      workingBoard[i] = null;
+      if (score > bestScore) {
+        bestScore = score;
+        bestMove = i;
+      }
+    }
+  }
+  return bestMove;
+}
+
+function scheduleBotTurn() {
+  if (gameMode !== "bot" || gameOver || currentPlayer !== "O") return;
+  isBotThinking = true;
+  statusText.textContent = getTurnLabel();
+
+  botTimerId = setTimeout(() => {
+    botTimerId = null;
+    isBotThinking = false;
+    if (gameOver || currentPlayer !== "O") return;
+    const moveIndex = getBotMove(board);
+    if (moveIndex !== null && moveIndex !== undefined) {
+      placeMark(moveIndex, "O");
+      checkResult();
+    }
+  }, 300);
+}
+
+// --- ONLINE MULTIPLAYER LOGIC (PeerJS) ---
+function cleanupNetwork() {
+  if (conn) {
+    conn.close();
+    conn = null;
+  }
+  if (peer) {
+    peer.destroy();
+    peer = null;
+  }
+  isConnected = false;
+  mySymbol = null;
+  createRoomBtn.disabled = false;
+  joinRoomBtn.disabled = false;
+  roomCodeInput.disabled = false;
+  roomInfo.textContent = "Generate a room code or enter one to join.";
+}
+
+function setupConnection(connection) {
+  conn = connection;
+
+  conn.on("open", () => {
+    isConnected = true;
+    resetBoardState();
+    roomInfo.innerHTML = `Connected! You are playing as <strong>${mySymbol}</strong>`;
+    statusText.textContent = getTurnLabel();
+  });
+
+  conn.on("data", (data) => {
+    if (data.type === "move" && !gameOver && currentPlayer !== mySymbol) {
+      placeMark(data.index, currentPlayer);
+      checkResult();
+    } else if (data.type === "reset") {
+      resetBoardState();
+    }
+  });
+
+  conn.on("close", () => {
+    isConnected = false;
+    gameOver = true;
+    statusText.textContent = "Opponent disconnected.";
+    roomInfo.textContent = "Connection closed. Generate or join a new room.";
+    createRoomBtn.disabled = false;
+    joinRoomBtn.disabled = false;
+    roomCodeInput.disabled = false;
+  });
+}
+
+function generateRoomCode() {
+  cleanupNetwork();
+  // Generate random 5-digit number (10000 - 99999)
+  const code = Math.floor(10000 + Math.random() * 90000).toString();
+  mySymbol = "X";
+
+  createRoomBtn.disabled = true;
+  joinRoomBtn.disabled = true;
+  roomCodeInput.value = code;
+  roomCodeInput.disabled = true;
+  roomInfo.textContent = "Creating room...";
+
+  peer = new Peer(ROOM_PREFIX + code);
+
+  peer.on("open", () => {
+    roomInfo.innerHTML = `Room Code: <strong>${code}</strong> (Share with friend)`;
+    statusText.textContent = "Waiting for player O to join...";
+  });
+
+  peer.on("connection", (incomingConn) => {
+    // Only allow 1 opponent
+    if (isConnected) {
+      incomingConn.close();
+      return;
+    }
+    setupConnection(incomingConn);
+  });
+
+  peer.on("error", (err) => {
+    if (err.type === "unavailable-id") {
+      // Rare collision: retry automatically with a new 5-digit code
+      generateRoomCode();
+    } else {
+      roomInfo.textContent = "Network error. Try again.";
+      cleanupNetwork();
+    }
+  });
+}
+
+function joinRoom() {
+  const code = roomCodeInput.value.trim();
+  if (!/^\d{4,5}$/.test(code)) {
+    roomInfo.textContent = "Please enter a valid 4 or 5 digit code.";
+    return;
+  }
+
+  cleanupNetwork();
+  mySymbol = "O";
+  createRoomBtn.disabled = true;
+  joinRoomBtn.disabled = true;
+  roomCodeInput.disabled = true;
+  roomInfo.textContent = `Connecting to room ${code}...`;
+
+  peer = new Peer();
+
+  peer.on("open", () => {
+    const outgoingConn = peer.connect(ROOM_PREFIX + code, { reliable: true });
+    setupConnection(outgoingConn);
+  });
+
+  peer.on("error", (err) => {
+    roomInfo.textContent =
+      err.type === "peer-unavailable"
+        ? `Room ${code} not found.`
+        : "Could not connect to room.";
+    cleanupNetwork();
+  });
+}
+
+// --- CORE GAME HANDLERS ---
+function handleCellClick(e) {
+  const index = Number(e.currentTarget.dataset.index);
+
+  if (gameOver || isBotThinking || board[index] !== null) return;
+  if (gameMode === "bot" && currentPlayer === "O") return;
+  if (gameMode === "online") {
+    if (!isConnected || currentPlayer !== mySymbol) return;
+    conn.send({ type: "move", index });
+  }
+
+  placeMark(index, currentPlayer);
+  const finished = checkResult();
+
+  if (!finished && gameMode === "bot" && currentPlayer === "O") {
+    scheduleBotTurn();
+  }
+}
+
+function setMode(newMode) {
+  if (gameMode === newMode) return;
+  cleanupNetwork();
+  gameMode = newMode;
+
+  modePvpBtn.classList.toggle("active", newMode === "pvp");
+  modeBotBtn.classList.toggle("active", newMode === "bot");
+  modeOnlineBtn.classList.toggle("active", newMode === "online");
+  onlinePanel.classList.toggle("visible", newMode === "online");
+
+  resetBoardState();
+}
+
+function resetBoardState() {
+  clearTimeout(botTimerId);
+  botTimerId = null;
+  isBotThinking = false;
+
+  board = Array(9).fill(null);
+  currentPlayer = "X";
+  gameOver = false;
+  statusText.textContent = getTurnLabel();
+
+  cells.forEach((cell) => {
+    cell.textContent = "";
+    cell.disabled = false;
+    cell.classList.remove("x", "o", "win");
+  });
+}
+
+function handleResetClick() {
+  if (gameMode === "online") {
+    if (!isConnected) return;
+    conn.send({ type: "reset" });
+  }
+  resetBoardState();
+}
+
+cells.forEach((cell) => cell.addEventListener("click", handleCellClick));
+resetBtn.addEventListener("click", handleResetClick);
+modePvpBtn.addEventListener("click", () => setMode("pvp"));
+modeBotBtn.addEventListener("click", () => setMode("bot"));
+modeOnlineBtn.addEventListener("click", () => setMode("online"));
+
+createRoomBtn.addEventListener("click", generateRoomCode);
+joinRoomBtn.addEventListener("click", joinRoom);
+roomCodeInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") joinRoom();
+});
+  </script>
+</body>
+</html>
